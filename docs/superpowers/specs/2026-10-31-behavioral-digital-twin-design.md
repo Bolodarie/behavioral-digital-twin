@@ -77,8 +77,10 @@ Evento estruturado, tipos fechados:
 | `exercise_id` | str | tem que existir no catálogo |
 | `topic` | str | tem que ser o tópico do exercício no catálogo |
 | `event_type` | enum | `exercicio_iniciado`, `exercicio_respondido`, `exercicio_abandonado` |
-| `occurred_at` | datetime | ISO 8601 em UTC, com fuso (sem fuso é rejeitado); gravado como `YYYY-MM-DDTHH:MM:SSZ` (ordena como texto) |
-| `payload` | objeto | `exercicio_respondido`: `acertou: bool`, `tempo_gasto_s: int > 0`; os outros dois: vazio |
+| `occurred_at` | datetime | ISO 8601 com fuso (sem fuso é rejeitado); qualquer deslocamento é convertido para UTC e a resolução é de 1 segundo (frações são descartadas); gravado como `YYYY-MM-DDTHH:MM:SSZ` (ordena como texto) |
+| `payload` | objeto | `exercicio_respondido`: `acertou: bool`, `tempo_gasto_s: int > 0`, ambos com tipo estrito (`"true"`, `1`, `12.5`, `"30"` e `true` no lugar do inteiro são rejeitados) e sem chaves extras; os outros dois: vazio |
+
+Campos extras no nível do evento e identificadores vazios também são rejeitados.
 
 Os exemplos do pedido original mapeiam assim: `iniciou_exercicio_funcoes` → `exercicio_iniciado` com `topic=funcoes`; `errou_equacao_2_grau` → `exercicio_respondido` com `topic=equacao_2_grau`, `acertou=false`; `tempo_gasto_120s` → `tempo_gasto_s=120` no payload da resposta.
 
@@ -92,7 +94,7 @@ Modo WAL, para a API ler enquanto o pipeline escreve. Pipeline e ingestão usam 
 - `eventos_brutos(seq PK autoincrement, event_id UNIQUE nulo-permitido, student_id, exercise_id, topic, event_type, occurred_at, payload_json, bruto_json NOT NULL, recebido_em, status 'pendente'|'processado'|'rejeitado', motivo_rejeicao, processado_em)` — só inserção de eventos; só `status`, `motivo_rejeicao` e `processado_em` são atualizados depois.
 - `gemeo_topico(student_id, topic_id, rating_elo, tentativas, acertos, atualizado_em)`, PK `(student_id, topic_id)`.
 - `gemeo_exercicio(student_id, exercise_id, tentativas, acertou_alguma_vez)`, PK `(student_id, exercise_id)` — para a recomendação não repetir o que já foi resolvido.
-- `gemeo_aluno(student_id PK, velocidade_media_s nulo, taxa_abandono, erros_seguidos, desempenho_relativo, respostas, ultimo_evento_em, atualizado_em)`.
+- `gemeo_aluno(student_id PK, velocidade_media_s nulo, taxa_abandono, erros_seguidos, desempenho_relativo, respostas, ultimo_evento_em, ultimo_evento_id, atualizado_em)` — `(ultimo_evento_em, ultimo_evento_id)` é a maior chave `(occurred_at, event_id)` já aplicada ao aluno; `atualizado_em` é igual a `ultimo_evento_em` (vem do horário do evento, nunca do relógio real, para o reprocessamento reproduzir o estado exato).
 
 Todo timestamp é UTC em texto ISO 8601.
 
@@ -108,7 +110,7 @@ Funções públicas (em `pipeline/consumidor.py`), todas recebendo a conexão:
 Regras:
 - **Atomicidade:** aplicar um evento ao gêmeo e marcá-lo `processado` acontece numa transação. Se algo falhar no meio, o evento continua `pendente` e o gêmeo não muda.
 - **Dois tipos de falha, tratados de forma diferente:** (a) erro de domínio ligado ao evento (`EventoInvalido`, por exemplo exercício que sumiu do catálogo depois da ingestão) marca o evento `rejeitado` com o motivo, de forma permanente, e o lote segue; reconstruções e reprocessamentos não reaplicam eventos rejeitados. (b) Qualquer outra exceção (bug, banco indisponível) desfaz a transação daquele evento, ele continua `pendente` e a exceção sobe: não se engole erro inesperado.
-- **Evento atrasado:** se um pendente tem `occurred_at` anterior ao `ultimo_evento_em` do aluno, aplicá-lo "em cima" daria um Elo diferente do correto (o Elo depende da ordem). O pipeline então chama `reconstruir_aluno` para esse aluno. Propriedade verificável: processar os mesmos eventos em qualquer ordem de chegada resulta no mesmo gêmeo que processá-los em ordem.
+- **Evento atrasado:** se a chave `(occurred_at, event_id)` de um pendente é menor que `(ultimo_evento_em, ultimo_evento_id)` do aluno (a comparação usa a chave completa, para tratar empate de horário), aplicá-lo "em cima" daria um Elo diferente do correto (o Elo depende da ordem). O pipeline então chama `reconstruir_aluno` para esse aluno. Propriedade verificável: processar os mesmos eventos em qualquer ordem de chegada resulta no mesmo gêmeo que processá-los em ordem.
 - **Idempotência:** duplicado nunca entra (`event_id` único); reprocessar nunca duplica efeito.
 - **Igualdade exata:** "mesmo estado" significa valores idênticos, não aproximados. Os mesmos cálculos, na mesma ordem, dão os mesmos `float`s, e o SQLite guarda `REAL` em 64 bits sem perda; nada é arredondado ao gravar. Os testes comparam com igualdade exata.
 
