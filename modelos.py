@@ -136,3 +136,20 @@ class Recomendacao(BaseModel):
     expectativa_acerto: float | None
     probabilidade_evasao: float
     motivo: str
+
+
+class TopicoResposta(BaseModel):
+    topic_id: str
+    rating_elo: float
+    tentativas: int
+    acertos: int
+
+
+class GemeoResposta(BaseModel):
+    """Visão do gêmeo na API; a probabilidade de evasão é calculada na leitura."""
+
+    student_id: str
+    ultimo_evento_em: datetime
+    velocidade_media_s: float | None
+    probabilidade_evasao: float
+    topicos: list[TopicoResposta]
