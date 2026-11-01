@@ -257,7 +257,7 @@ Endpoints (todos `GET`, somente leitura, respostas em Pydantic):
 | `/alunos/{student_id}/gemeo` | ratings por tópico (com tentativas e acertos), velocidade média, probabilidade de evasão (calculada na hora) e `ultimo_evento_em` |
 | `/alunos/{student_id}/recomendacao` | `student_id`, `topico`, `exercicio {id, enunciado, dificuldade}`, `expectativa_acerto`, `probabilidade_evasao`, `motivo` |
 
-Aluno sem nenhum evento processado: `404`. Aluno que só tem `exercicio_iniciado` existe: `/gemeo` responde `200` com a lista de ratings vazia e `/recomendacao` trata todos os tópicos como não tentados. Banco ausente ou que não abre: `503`.
+Aluno sem nenhum evento processado: `404`. Aluno que só tem `exercicio_iniciado` existe: `/gemeo` responde `200` com a lista de ratings vazia e `/recomendacao` trata todos os tópicos como não tentados. Banco ausente, que não abre ou sem as tabelas do gêmeo: `503` (em qualquer rota, `/saude` inclusive).
 
 ## Pipeline: duplicado, atrasado, rejeitado e reprocessamento
 
@@ -325,7 +325,6 @@ A evidência que o projeto assume está em `tests/test_ponta_a_ponta.py`: uma tu
 - **Reprocessamento completo não é invisível para a API.** `reprocessar_tudo` confirma (commit) o reinício (gêmeo apagado, eventos devolvidos a `pendente`) e depois reaplica os eventos um a um. Enquanto roda, a API pode ver um gêmeo parcial (alunos com estado até certo ponto, outros ainda sem estado, que respondem `404`). Se for interrompido, o gêmeo fica como um prefixo consistente dos eventos e `python -m pipeline.executar` (sem `--reprocessar`) termina o serviço.
 - **Uma linha pendente irreconstruível derruba a fila inteira.** Se existir uma linha `pendente` com `payload_json` corrompido (só acontece se alguém inserir na mão, passando por fora da ingestão, que valida tudo), `listar_pendentes` falha para a fila inteira e nada é processado até a linha ser corrigida ou removida. Na reconstrução de um aluno, uma linha assim é marcada `rejeitado` e a reconstrução segue; na lista de pendentes não há esse tratamento.
 - **A reconstrução reescreve `processado_em`.** Reaplicar os eventos de um aluno (evento atrasado ou `reconstruir_aluno`) renova o `processado_em` de todos os eventos reaplicados. O estado do gêmeo não é afetado, só esse carimbo.
-- **`/saude` só confere que o arquivo abre como SQLite.** Um arquivo SQLite que não é o banco do gêmeo (sem as tabelas) responde `200` em `/saude` e `500` em `/alunos/{id}/gemeo`. Já arquivo ausente ou que não abre responde `503`.
 - **Simulação com poucos dias pode não gerar nada.** Com `--dias` muito pequeno o simulador pode gerar zero evento (por exemplo, `--semente 5 --alunos 1 --dias 1`; a CLI imprime `aceitos: 0`). Além disso, o `desistente` só estuda nos primeiros 40% do período, em dias inteiros: com `--dias 2` ou menos ele não gera evento nenhum.
 - **Correlação por tópico é ruidosa.** Com cerca de 10 alunos por tópico (12 alunos no total), o Spearman por tópico varia muito. O teste de convergência junta mais alunos (40) e fixa a semente 42.
 - **`eventos_brutos` só cresce.** Eventos nunca são apagados nem alterados; depois da inserção só `status`, `motivo_rejeicao` e `processado_em` mudam. Não há rotina de limpeza.

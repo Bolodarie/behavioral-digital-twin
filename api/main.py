@@ -56,8 +56,8 @@ def create_app(
         return estado
 
     @app.get("/saude")
-    async def saude(conn: sqlite3.Connection = Depends(conexao)) -> dict[str, str]:
-        conn.execute("SELECT 1 FROM sqlite_master LIMIT 1")
+    async def saude(_: sqlite3.Connection = Depends(conexao)) -> dict[str, str]:
+        # `abrir_somente_leitura` já provou que o banco abre e tem o schema do gêmeo.
         return {"status": "ok"}
 
     @app.get("/alunos/{student_id}/gemeo", response_model=GemeoResposta)

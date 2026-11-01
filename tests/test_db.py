@@ -96,6 +96,26 @@ def test_somente_leitura_arquivo_inexistente(tmp_path):
         db.abrir_somente_leitura(tmp_path / "nao_existe.db")
 
 
+def test_somente_leitura_sem_tabelas_do_gemeo(tmp_path, monkeypatch):
+    estranho = tmp_path / "estranho.db"
+    outro = sqlite3.connect(estranho)
+    outro.execute("CREATE TABLE outra (x INTEGER)")
+    outro.commit()
+    outro.close()
+    abertas = []
+    original = sqlite3.connect
+
+    def espiao(*args, **kwargs):
+        abertas.append(original(*args, **kwargs))
+        return abertas[-1]
+
+    monkeypatch.setattr(db.sqlite3, "connect", espiao)
+    with pytest.raises(db.BancoIndisponivel):
+        db.abrir_somente_leitura(estranho)
+    with pytest.raises(sqlite3.ProgrammingError):  # a conexao foi fechada
+        abertas[0].execute("SELECT 1")
+
+
 def test_status_invalido_recusado(conn):
     _inserir_evento(conn, "e1", status="pendente")
     with pytest.raises(sqlite3.IntegrityError):
