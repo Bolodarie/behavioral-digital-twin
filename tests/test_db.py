@@ -1,4 +1,5 @@
 """Banco SQLite: schema, catálogo semeado, WAL e modo somente leitura."""
+import multiprocessing
 import sqlite3
 from pathlib import Path
 
@@ -138,3 +139,37 @@ def test_default_db_path_ancorado_na_pasta_do_projeto():
     raiz = Path(db.__file__).resolve().parent
     assert db.DEFAULT_DB_PATH == raiz / "data" / "gemeo.db"
     assert db.DEFAULT_DB_PATH.is_absolute()
+
+
+def test_arquivo_corrompido_vira_banco_indisponivel(tmp_path):
+    lixo = tmp_path / "lixo.db"
+    lixo.write_bytes(b"isto nao e um banco sqlite " * 100)
+    with pytest.raises(db.BancoIndisponivel):
+        db.abrir(lixo)
+
+
+def _abrir_em_processo(caminho, barreira, fila):
+    try:
+        barreira.wait(timeout=30)
+        conn = db.abrir(caminho)
+        n = conn.execute("SELECT COUNT(*) FROM exercicios").fetchone()[0]
+        conn.close()
+        fila.put(("ok", n))
+    except BaseException as exc:  # o teste precisa ver qualquer falha
+        fila.put(("erro", repr(exc)))
+
+
+def test_primeira_abertura_concorrente(tmp_path):
+    ctx = multiprocessing.get_context("fork")
+    n = 8
+    for rodada in range(5):
+        caminho = tmp_path / f"concorrente{rodada}" / "gemeo.db"
+        barreira = ctx.Barrier(n)
+        fila = ctx.Queue()
+        procs = [ctx.Process(target=_abrir_em_processo, args=(caminho, barreira, fila)) for _ in range(n)]
+        for p in procs:
+            p.start()
+        resultados = [fila.get(timeout=60) for _ in procs]
+        for p in procs:
+            p.join()
+        assert resultados == [("ok", len(EXERCICIOS))] * n

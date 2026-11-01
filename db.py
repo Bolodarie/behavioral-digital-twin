@@ -4,6 +4,7 @@ Conexões em autocommit (`isolation_level=None`): transações são explícitas
 (`BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK`). A API usa a conexão somente leitura.
 """
 import sqlite3
+import time
 from pathlib import Path
 
 from catalogo import EXERCICIOS, TOPICOS
@@ -104,21 +105,52 @@ def _criar_schema_e_catalogo(conn: sqlite3.Connection) -> None:
         raise
 
 
+ESPERA_MAXIMA_S = 10.0
+
+
+def _ativar_wal(conn: sqlite3.Connection) -> None:
+    """Liga o modo WAL, tentando de novo se outro processo segura o bloqueio.
+
+    A troca para WAL precisa de bloqueio exclusivo e o `timeout` da conexão não
+    a repete de forma confiável; na primeira execução vários processos podem
+    abrir o banco ao mesmo tempo.
+    """
+    limite = time.monotonic() + ESPERA_MAXIMA_S
+    espera = 0.005
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            ocupado = "locked" in str(exc) or "busy" in str(exc)
+            if not ocupado or time.monotonic() >= limite:
+                raise
+            time.sleep(espera)
+            espera = min(espera * 2, 0.1)
+
+
 def abrir(caminho: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    """Abre (criando, se preciso) o banco de escrita, com schema e catálogo prontos."""
+    """Abre (criando, se preciso) o banco de escrita, com schema e catálogo prontos.
+
+    Qualquer falha do SQLite na abertura (arquivo corrompido, bloqueio que não
+    se resolve) vira `BancoIndisponivel`.
+    """
     caminho = Path(caminho)
+    conn: sqlite3.Connection | None = None
     try:
         caminho.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(caminho, isolation_level=None)
-    except (OSError, sqlite3.Error) as exc:
-        raise BancoIndisponivel(f"não foi possível abrir o banco {caminho}: {exc}") from exc
-    try:
+        conn = sqlite3.connect(caminho, isolation_level=None, timeout=ESPERA_MAXIMA_S)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        _ativar_wal(conn)
         conn.execute("PRAGMA foreign_keys=ON")
         _criar_schema_e_catalogo(conn)
+    except (OSError, sqlite3.Error) as exc:
+        if conn is not None:
+            conn.close()
+        raise BancoIndisponivel(f"não foi possível abrir o banco {caminho}: {exc}") from exc
     except BaseException:
-        conn.close()
+        if conn is not None:
+            conn.close()
         raise
     return conn
 
