@@ -80,7 +80,7 @@ def test_duplicado_de_aceito_vale_mesmo_se_o_segundo_for_invalido(conn):
         (evento_dict(occurred_at="2026-03-02T12:00:00"), "occurred_at"),
         (evento_dict(payload={"acertou": True, "tempo_gasto_s": 0}), "tempo_gasto_s"),
         (evento_dict(payload={"acertou": "true", "tempo_gasto_s": 10}), "acertou"),
-        (evento_dict(payload={"acertou": True, "tempo_gasto_s": 10, "x": 1}), "x"),
+        (evento_dict(payload={"acertou": True, "tempo_gasto_s": 10, "x": 1}), "x: extra inputs"),
         (evento_dict(event_type="exercicio_iniciado", payload={"a": 1}), "payload"),
         (evento_dict(student_id=""), "student_id"),
         (evento_dict(exercise_id="funcoes-99"), "exerc"),
@@ -142,7 +142,8 @@ def test_motivo_longo_e_truncado(conn):
     dado = evento_dict(payload={f"k{i}": i for i in range(200)})
     r = receber(conn, dado, agora=relogio)
     assert r.status == "rejeitado"
-    assert len(r.motivo) <= 500
+    assert len(r.motivo) == 500
+    assert linhas(conn)[0]["motivo_rejeicao"] == r.motivo
 
 
 @pytest.mark.parametrize(
@@ -161,3 +162,116 @@ def test_transacao_nao_fica_aberta(conn):
     receber(conn, evento_dict(), agora=relogio)
     receber(conn, evento_dict(event_id="e2", topic="x"), agora=relogio)
     assert not conn.in_transaction
+
+
+def profundo_dict(n=5000):
+    raiz: dict = {}
+    atual = raiz
+    for _ in range(n):
+        atual["k"] = {}
+        atual = atual["k"]
+    return raiz
+
+
+def profundo_lista(n=5000):
+    raiz: list = []
+    atual = raiz
+    for _ in range(n):
+        novo: list = []
+        atual.append(novo)
+        atual = novo
+    return raiz
+
+
+def bruto_valido(linha):
+    """`bruto_json` sempre é JSON válido e codificável em UTF-8."""
+    linha["bruto_json"].encode("utf-8")
+    return json.loads(linha["bruto_json"])
+
+
+@pytest.mark.parametrize(
+    "dado",
+    [
+        evento_dict(extra=profundo_dict()),
+        evento_dict(extra=profundo_lista()),
+        profundo_lista(),
+        profundo_dict(),
+    ],
+    ids=["extra-dict", "extra-lista", "lista", "dict"],
+)
+def test_aninhamento_profundo_vira_rejeitado(conn, dado):
+    r = receber(conn, dado, agora=relogio)
+    assert r.status == "rejeitado"
+    (linha,) = linhas(conn)
+    assert linha["status"] == "rejeitado"
+    bruto_valido(linha)
+    assert not conn.in_transaction
+
+
+def test_surrogate_no_event_id_vira_rejeitado_sem_event_id(conn):
+    r = receber(conn, evento_dict(event_id="a\ud800b"), agora=relogio)
+    assert r.status == "rejeitado"
+    assert r.event_id is None
+    (linha,) = linhas(conn)
+    assert linha["event_id"] is None
+    assert linha["status"] == "rejeitado"
+    assert bruto_valido(linha)["event_id"] == "a\ud800b"
+
+
+def test_surrogate_no_student_id_vira_rejeitado(conn):
+    r = receber(conn, evento_dict(student_id="\ud800"), agora=relogio)
+    assert r.status == "rejeitado"
+    assert r.event_id == "e1"
+    assert "caracteres invalidos" in r.motivo
+    (linha,) = linhas(conn)
+    assert linha["status"] == "rejeitado"
+    assert linha["student_id"] is None
+    assert linha["motivo_rejeicao"] == r.motivo
+    bruto_valido(linha)
+
+
+@pytest.mark.parametrize(
+    "dado",
+    [
+        evento_dict(extra="\ud800"),
+        evento_dict(payload={"acertou": True, "tempo_gasto_s": 10, "x": "\ud800"}),
+        evento_dict(payload={"acertou": True, "tempo_gasto_s": 10, "\ud800": 1}),
+        evento_dict(exercise_id="\ud800"),
+        evento_dict(topic="\ud800"),
+        evento_dict(occurred_at="\ud800"),
+        evento_dict(event_type="\ud800"),
+        {"\ud800": 1},
+    ],
+)
+def test_surrogate_em_outros_campos_vira_rejeitado(conn, dado):
+    r = receber(conn, dado, agora=relogio)
+    assert r.status == "rejeitado"
+    (linha,) = linhas(conn)
+    assert linha["status"] == "rejeitado"
+    linha["motivo_rejeicao"].encode("utf-8")
+    bruto_valido(linha)
+
+
+def test_relogio_que_levanta_propaga_sem_transacao_nem_linha(conn):
+    def quebrado():
+        raise RuntimeError("relogio quebrado")
+
+    with pytest.raises(RuntimeError, match="relogio quebrado"):
+        receber(conn, evento_dict(), agora=quebrado)
+    assert not conn.in_transaction
+    assert linhas(conn) == []
+
+
+def test_insert_que_falha_desfaz_a_transacao_e_propaga(conn):
+    conn.execute(
+        "CREATE TRIGGER falha BEFORE INSERT ON eventos_brutos "
+        "BEGIN SELECT RAISE(ABORT, 'falha simulada'); END"
+    )
+    with pytest.raises(Exception, match="falha simulada"):
+        receber(conn, evento_dict(), agora=relogio)
+    assert not conn.in_transaction
+    assert linhas(conn) == []
+
+    conn.execute("DROP TRIGGER falha")
+    assert receber(conn, evento_dict(), agora=relogio).status == "aceito"
+    assert len(linhas(conn)) == 1
