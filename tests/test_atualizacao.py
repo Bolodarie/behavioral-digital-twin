@@ -153,3 +153,39 @@ def test_atualizado_em_vem_do_evento():
     r2 = aplicar_evento(depois, 3, r.aluno, r.topico, r.exercicio)
     assert r2.aluno.atualizado_em == esperado + timedelta(seconds=30)
     assert r2.topico.atualizado_em == esperado + timedelta(seconds=30)
+
+
+@pytest.mark.parametrize("tipo", ["exercicio_iniciado", "exercicio_abandonado", "exercicio_respondido"])
+@pytest.mark.parametrize("dificuldade", [0, 6, -1, 3.0, True, "3", None])
+def test_dificuldade_invalida_e_rejeitada_em_todos_os_tipos(tipo, dificuldade):
+    with pytest.raises(ValueError, match="dificuldade"):
+        aplicar_evento(_evento(event_type=tipo), dificuldade, None, None, None)
+
+
+def test_aluno_de_outro_student_id_e_rejeitado():
+    _, r = _primeira_resposta_certa()
+    ev = _evento(event_id="e2", student_id="aluno-2", occurred_at="2026-03-02T12:05:00Z")
+    with pytest.raises(ValueError, match="aluno-1.*aluno-2|aluno-2.*aluno-1"):
+        aplicar_evento(ev, 3, r.aluno, None, None)
+
+
+def test_topico_de_outro_aluno_ou_topico_e_rejeitado():
+    _, r = _primeira_resposta_certa()
+    ev = _respondido("e2", True, 10, "2026-03-02T12:05:00Z")
+    outro_aluno = r.topico.model_copy(update={"student_id": "aluno-2"})
+    with pytest.raises(ValueError, match="aluno-2"):
+        aplicar_evento(ev, 3, r.aluno, outro_aluno, None)
+    outro_topico = r.topico.model_copy(update={"topic_id": "equacao_1_grau"})
+    with pytest.raises(ValueError, match="equacao_1_grau"):
+        aplicar_evento(ev, 3, r.aluno, outro_topico, None)
+
+
+def test_exercicio_de_outro_aluno_ou_exercicio_e_rejeitado():
+    _, r = _primeira_resposta_certa()
+    ev = _respondido("e2", True, 10, "2026-03-02T12:05:00Z")
+    outro_aluno = r.exercicio.model_copy(update={"student_id": "aluno-2"})
+    with pytest.raises(ValueError, match="aluno-2"):
+        aplicar_evento(ev, 3, r.aluno, r.topico, outro_aluno)
+    outro_exercicio = r.exercicio.model_copy(update={"exercise_id": "funcoes-1"})
+    with pytest.raises(ValueError, match="funcoes-1"):
+        aplicar_evento(ev, 3, r.aluno, r.topico, outro_exercicio)

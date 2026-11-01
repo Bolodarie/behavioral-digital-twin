@@ -48,6 +48,46 @@ def _avancar_ultimo_evento(aluno: EstadoAluno, evento: Evento) -> EstadoAluno:
     return aluno
 
 
+def _validar_entradas(
+    evento: Evento,
+    dificuldade: int,
+    aluno: EstadoAluno | None,
+    topico: EstadoTopico | None,
+    exercicio: EstadoExercicio | None,
+) -> None:
+    """Recusa dificuldade inválida e estados que não pertencem ao evento."""
+    if isinstance(dificuldade, bool) or not isinstance(dificuldade, int):
+        raise ValueError(f"dificuldade deve ser um inteiro de 1 a 5: {dificuldade!r}")
+    rating_do_exercicio(dificuldade)  # levanta ValueError fora de 1..5
+    if aluno is not None and aluno.student_id != evento.student_id:
+        raise ValueError(
+            f"estado do aluno {aluno.student_id!r} não pertence ao evento "
+            f"do aluno {evento.student_id!r}"
+        )
+    if topico is not None:
+        if topico.student_id != evento.student_id:
+            raise ValueError(
+                f"estado do tópico do aluno {topico.student_id!r} não pertence "
+                f"ao evento do aluno {evento.student_id!r}"
+            )
+        if topico.topic_id != evento.topic:
+            raise ValueError(
+                f"estado do tópico {topico.topic_id!r} não corresponde ao "
+                f"tópico do evento {evento.topic!r}"
+            )
+    if exercicio is not None:
+        if exercicio.student_id != evento.student_id:
+            raise ValueError(
+                f"estado do exercício do aluno {exercicio.student_id!r} não "
+                f"pertence ao evento do aluno {evento.student_id!r}"
+            )
+        if exercicio.exercise_id != evento.exercise_id:
+            raise ValueError(
+                f"estado do exercício {exercicio.exercise_id!r} não corresponde "
+                f"ao exercício do evento {evento.exercise_id!r}"
+            )
+
+
 def aplicar_evento(
     evento: Evento,
     dificuldade: int,
@@ -58,8 +98,11 @@ def aplicar_evento(
     """Aplica um evento ao estado atual e devolve o novo estado.
 
     `topico` e `exercicio` do resultado só vêm preenchidos quando o evento os
-    altera (apenas `exercicio_respondido`).
+    altera (apenas `exercicio_respondido`). Levanta `ValueError` se a dificuldade
+    não for um inteiro de 1 a 5 (em qualquer tipo de evento) ou se algum estado
+    recebido não for do aluno/tópico/exercício do evento.
     """
+    _validar_entradas(evento, dificuldade, aluno, topico, exercicio)
     aluno = _avancar_ultimo_evento(
         aluno if aluno is not None else _aluno_inicial(evento), evento
     )
