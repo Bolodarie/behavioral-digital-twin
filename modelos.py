@@ -119,3 +119,20 @@ class ResultadoIngestao(BaseModel):
     status: Literal["aceito", "duplicado", "rejeitado"]
     event_id: str | None = None
     motivo: str | None = None
+
+
+class ExercicioRecomendado(BaseModel):
+    id: str
+    enunciado: str
+    dificuldade: int
+
+
+class Recomendacao(BaseModel):
+    """Próximo exercício sugerido; sem nada a recomendar, tópico e exercício são `None`."""
+
+    student_id: str
+    topico: str | None
+    exercicio: ExercicioRecomendado | None
+    expectativa_acerto: float | None
+    probabilidade_evasao: float
+    motivo: str
