@@ -12,6 +12,7 @@ Todos os eventos válidos saem de um único fluxo `random.Random(semente)`.
 Qualquer aleatoriedade extra (por exemplo, defeitos nos dados) deve usar outro
 fluxo, para nunca alterar os eventos válidos.
 """
+import copy
 import random
 import uuid
 from dataclasses import dataclass
@@ -148,8 +149,96 @@ def _simular_aluno(
     return eventos
 
 
-def simular(semente: int, n_alunos: int, inicio: datetime, dias: int) -> Simulacao:
-    """Simula `n_alunos` alunos ao longo de `dias` dias a partir de `inicio`."""
+# Defeitos (pós-processamento sobre a lista válida, com fluxo próprio de sorteio).
+_FRACAO_DUPLICADOS = 0.05
+_JANELA_DESORDEM = 20  # eventos por janela embaralhável
+_PROB_JANELA_EMBARALHADA = 0.25
+_MALFORMADOS_POR_TIPO = 2
+
+
+def _malformado(tipo: str, id_novo: str, instante: str) -> dict[str, Any]:
+    """Evento quebrado de um jeito específico, com `event_id` que não colide."""
+    dado = {
+        "event_id": id_novo,
+        "student_id": "aluno-001",
+        "exercise_id": EXERCICIOS[0].id,
+        "topic": EXERCICIOS[0].topico_id,
+        "event_type": "exercicio_respondido",
+        "occurred_at": instante,
+        "payload": {"acertou": True, "tempo_gasto_s": 60},
+    }
+    if tipo == "sem_fuso":
+        dado["occurred_at"] = instante.removesuffix("Z")
+    elif tipo == "tempo_zero":
+        dado["payload"] = {"acertou": True, "tempo_gasto_s": 0}
+    elif tipo == "acertou_texto":
+        dado["payload"] = {"acertou": "sim", "tempo_gasto_s": 60}
+    elif tipo == "sem_event_id":
+        del dado["event_id"]
+    elif tipo == "exercicio_inexistente":
+        dado["exercise_id"] = "inexistente-99"
+    else:
+        raise ValueError(f"tipo de defeito desconhecido: {tipo}")
+    return dado
+
+
+_TIPOS_MALFORMADOS = (
+    "sem_fuso",
+    "tempo_zero",
+    "acertou_texto",
+    "sem_event_id",
+    "exercicio_inexistente",
+)
+
+
+def _aplicar_defeitos(
+    validos: list[dict[str, Any]], semente: int, inicio: datetime
+) -> list[dict[str, Any]]:
+    """Devolve a lista como um produtor com defeitos a enviaria ("ordem de chegada").
+
+    Os eventos válidos não são alterados: só ganham cópias (duplicados), mudam de
+    posição dentro de janelas e recebem, entre eles, eventos malformados. Todo
+    sorteio vem de um fluxo derivado da semente, separado do dos eventos válidos.
+    """
+    rng = random.Random(f"defeitos-{semente}")
+    chegada = list(validos)
+
+    if chegada:  # duplicados: o mesmo dict reenviado logo depois do original
+        n_dup = max(1, round(len(validos) * _FRACAO_DUPLICADOS))
+        for i in sorted(rng.sample(range(len(validos)), min(n_dup, len(validos))), reverse=True):
+            chegada.insert(rng.randint(i + 1, len(chegada)), copy.deepcopy(validos[i]))
+
+    for ini in range(0, len(chegada), _JANELA_DESORDEM):  # desordem dentro de janelas
+        if rng.random() < _PROB_JANELA_EMBARALHADA:
+            janela = chegada[ini : ini + _JANELA_DESORDEM]
+            rng.shuffle(janela)
+            chegada[ini : ini + _JANELA_DESORDEM] = janela
+    primeira: dict[str, int] = {}  # posição da 1ª chegada de cada event_id
+    for pos, e in enumerate(chegada):
+        primeira.setdefault(e["event_id"], pos)
+    if len(validos) > 1 and sorted(primeira, key=primeira.get) == [
+        e["event_id"] for e in validos
+    ]:
+        # nenhuma janela mudou a ordem: troca as duas primeiras chegadas (garantia)
+        a, b = sorted(primeira.values())[:2]
+        chegada[a], chegada[b] = chegada[b], chegada[a]
+
+    instante = _texto(inicio)
+    for tipo in _TIPOS_MALFORMADOS:
+        for _ in range(_MALFORMADOS_POR_TIPO):
+            dado = _malformado(tipo, _novo_id(rng), instante)
+            chegada.insert(rng.randint(0, len(chegada)), dado)
+    return chegada
+
+
+def simular(
+    semente: int, n_alunos: int, inicio: datetime, dias: int, defeitos: bool = False
+) -> Simulacao:
+    """Simula `n_alunos` alunos ao longo de `dias` dias a partir de `inicio`.
+
+    Com `defeitos=True`, `eventos` sai como um produtor imperfeito o enviaria
+    (duplicados, ordem embaralhada e malformados); os eventos válidos são os mesmos.
+    """
     if inicio.tzinfo is None or inicio.utcoffset() is None:
         raise ValueError("inicio precisa ter fuso horário")
     if n_alunos < 1:
@@ -175,6 +264,8 @@ def simular(semente: int, n_alunos: int, inicio: datetime, dias: int) -> Simulac
         finais[aluno] = habilidades
 
     eventos.sort(key=lambda e: (e["occurred_at"], e["event_id"]))
+    if defeitos:
+        eventos = _aplicar_defeitos(eventos, semente, inicio)
     return Simulacao(
         eventos=eventos,
         habilidades_iniciais=iniciais,
