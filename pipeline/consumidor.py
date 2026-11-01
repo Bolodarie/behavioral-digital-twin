@@ -6,10 +6,11 @@ o status do evento mudam juntos ou nenhum dos dois muda.
 - `EventoInvalido` (erro de domínio, ex.: exercício fora do catálogo): desfaz a
   transação, marca o evento `rejeitado` com o motivo e o lote segue.
 - Evento atrasado (chave `(occurred_at, event_id)` menor que a do aluno):
-  `processar_evento` levanta `EventoAtrasado` (o evento continua `pendente`);
-  `processar_pendentes` o trata reconstruindo o gêmeo daquele aluno com todos os
-  eventos dele em ordem cronológica. Assim a ordem de chegada nunca muda o
-  resultado: o gêmeo é sempre o do processamento em ordem `(occurred_at, event_id)`.
+  `processar_evento` reconstrói o gêmeo daquele aluno com todos os eventos dele
+  em ordem cronológica (uma transação) e devolve `"reconstruido"`. Assim a ordem
+  de chegada nunca muda o resultado: o gêmeo é sempre o do processamento em
+  ordem `(occurred_at, event_id)`. `EventoAtrasado` é só o sinal interno entre
+  a checagem e a reconstrução; não sai de `processar_evento`.
 - Qualquer outra exceção (inclusive `ValueError` de `aplicar_evento`, que indica
   bug de programação): desfaz, o evento continua `pendente` e a exceção sobe.
 
@@ -36,7 +37,8 @@ class EventoInvalido(Exception):
 
 
 class EventoAtrasado(Exception):
-    """O evento é anterior ao último já aplicado ao aluno."""
+    """O evento é anterior ao último já aplicado ao aluno (sinal interno: quem
+    captura é `processar_evento`, que reconstrói o aluno)."""
 
     def __init__(self, student_id: str, mensagem: str = "") -> None:
         super().__init__(mensagem or f"evento atrasado para o aluno {student_id}")
@@ -84,7 +86,7 @@ def _aplicar_e_salvar(conn: sqlite3.Connection, evento: Evento) -> None:
     aluno = repositorio.ler_aluno(conn, evento.student_id)
     if aluno is not None and (evento.occurred_at, evento.event_id) < (
         aluno.ultimo_evento_em,
-        aluno.ultimo_evento_id or "",
+        aluno.ultimo_evento_id,
     ):
         raise EventoAtrasado(evento.student_id)
     topico = repositorio.ler_topico(conn, evento.student_id, evento.topic)
@@ -109,25 +111,41 @@ def _processar_na_transacao(
     return "processado"
 
 
+def _processar(
+    conn: sqlite3.Connection,
+    event_id: str,
+    agora: Callable[[], datetime] | None,
+) -> tuple[str, int, int]:
+    """Devolve `(resultado, processados, rejeitados)`; os dois contadores só são
+    não nulos quando houve reconstrução (pendentes do aluno que ela consumiu)."""
+    agora_texto = _agora_texto(agora)
+    try:
+        with _transacao(conn):
+            return _processar_na_transacao(conn, event_id, agora_texto), 0, 0
+    except EventoInvalido as erro:
+        with _transacao(conn):
+            fila.marcar_rejeitado(conn, event_id, str(erro))
+        return "rejeitado", 0, 0
+    except EventoAtrasado as atraso:
+        _, processados, rejeitados = _reconstruir(conn, atraso.student_id, agora)
+        return "reconstruido", processados, rejeitados
+
+
 def processar_evento(
     conn: sqlite3.Connection,
     event_id: str,
     *,
     agora: Callable[[], datetime] | None = None,
 ) -> str:
-    """Processa um evento: `"processado"`, `"rejeitado"` ou `"ignorado"`.
+    """Processa um evento: `"processado"`, `"rejeitado"`, `"ignorado"` ou
+    `"reconstruido"`.
 
-    `"ignorado"` quando ele já estava processado ou rejeitado. `event_id`
-    desconhecido levanta `KeyError`.
+    `"ignorado"` quando ele já estava processado ou rejeitado. `"reconstruido"`
+    quando o evento era atrasado: o gêmeo do aluno foi refeito com todos os
+    eventos dele em ordem (inclusive este e os outros pendentes dele).
+    `event_id` desconhecido levanta `KeyError`.
     """
-    agora_texto = _agora_texto(agora)
-    try:
-        with _transacao(conn):
-            return _processar_na_transacao(conn, event_id, agora_texto)
-    except EventoInvalido as erro:
-        with _transacao(conn):
-            fila.marcar_rejeitado(conn, event_id, str(erro))
-        return "rejeitado"
+    return _processar(conn, event_id, agora)[0]
 
 
 def _reconstruir_na_transacao(
@@ -192,20 +210,17 @@ def processar_pendentes(
     resumo = ResumoProcessamento(processados=0, rejeitados=0)
     reconstruidos: set[str] = set()
     for evento in fila.listar_pendentes(conn):
-        try:
-            resultado = processar_evento(conn, evento.event_id, agora=agora)
-        except EventoAtrasado as atraso:
-            _, processados, rejeitados = _reconstruir(conn, atraso.student_id, agora)
-            resumo.processados += processados
-            resumo.rejeitados += rejeitados
-            if atraso.student_id not in reconstruidos:
-                reconstruidos.add(atraso.student_id)
-                resumo.alunos_reconstruidos += 1
-            continue
+        resultado, consumidos_p, consumidos_r = _processar(conn, evento.event_id, agora)
         if resultado == "processado":
             resumo.processados += 1
         elif resultado == "rejeitado":
             resumo.rejeitados += 1
+        elif resultado == "reconstruido":
+            resumo.processados += consumidos_p
+            resumo.rejeitados += consumidos_r
+            if evento.student_id not in reconstruidos:
+                reconstruidos.add(evento.student_id)
+                resumo.alunos_reconstruidos += 1
     return resumo
 
 

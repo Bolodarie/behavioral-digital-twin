@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS gemeo_aluno (
     desempenho_relativo REAL NOT NULL,
     respostas           INTEGER NOT NULL,
     ultimo_evento_em    TEXT NOT NULL,
-    ultimo_evento_id    TEXT,
+    ultimo_evento_id    TEXT NOT NULL,
     atualizado_em       TEXT NOT NULL
 );
 """
@@ -156,14 +156,21 @@ def abrir(caminho: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
 
 
 def abrir_somente_leitura(caminho: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    """Abre um banco já existente em modo somente leitura (usado pela API)."""
+    """Abre um banco já existente em modo somente leitura (usado pela API).
+
+    Confere que é o banco do gêmeo (`gemeo_aluno` existe); um arquivo SQLite
+    qualquer vira `BancoIndisponivel`, e a conexão não vaza.
+    """
     caminho = Path(caminho)
     if not caminho.is_file():
         raise BancoIndisponivel(f"banco não encontrado: {caminho}")
+    conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(f"{caminho.resolve().as_uri()}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
-        conn.execute("SELECT 1 FROM sqlite_master LIMIT 1")
+        conn.execute("SELECT 1 FROM gemeo_aluno LIMIT 1")
     except sqlite3.Error as exc:
+        if conn is not None:
+            conn.close()
         raise BancoIndisponivel(f"não foi possível abrir o banco {caminho}: {exc}") from exc
     return conn

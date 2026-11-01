@@ -1,4 +1,5 @@
 import importlib
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -77,6 +78,19 @@ def test_saude_sem_banco_da_503(tmp_path):
     c = TestClient(create_app(tmp_path / "nao_existe.db", agora=lambda: AGORA))
     assert c.get("/saude").status_code == 503
     assert c.get("/alunos/aluno-1/gemeo").status_code == 503
+
+
+def test_sqlite_sem_tabelas_do_gemeo_da_503(tmp_path):
+    estranho = tmp_path / "estranho.db"
+    outro = sqlite3.connect(estranho)
+    outro.execute("CREATE TABLE outra (x INTEGER)")
+    outro.commit()
+    outro.close()
+    c = TestClient(create_app(estranho, agora=lambda: AGORA))
+    for caminho in ("/saude", "/alunos/x/gemeo", "/alunos/x/recomendacao"):
+        r = c.get(caminho)
+        assert r.status_code == 503, caminho
+        assert r.json() == {"detail": "banco indisponivel"}
 
 
 @pytest.mark.parametrize("student_id", ["fantasma", "com espaco", "a%2Fb", "x'; DROP--", "%C3%A7"])

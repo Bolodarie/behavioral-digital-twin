@@ -102,7 +102,7 @@ Todo timestamp é UTC em texto ISO 8601.
 
 Funções públicas (em `pipeline/consumidor.py`), todas recebendo a conexão:
 
-- `processar_evento(conn, event_id)` — atende o pedido original ("receber um evento novo e atualizar o gêmeo"). Evento já `processado` ou `rejeitado`: não faz nada.
+- `processar_evento(conn, event_id)` — atende o pedido original ("receber um evento novo e atualizar o gêmeo"). Evento já `processado` ou `rejeitado`: não faz nada (`"ignorado"`). Evento atrasado: reconstrói o aluno e devolve `"reconstruido"`, para a chamada isolada nunca deixar o gêmeo sem atualizar.
 - `processar_pendentes(conn) -> ResumoProcessamento` — laço do dia a dia: contagens de processados, rejeitados e alunos reconstruídos.
 - `reconstruir_aluno(conn, student_id)` — apaga o gêmeo desse aluno e reaplica todos os eventos dele (que não estejam `rejeitado`) em ordem `(occurred_at, event_id)`.
 - `reprocessar_tudo(conn)` — apaga todo o gêmeo, devolve os eventos não rejeitados a `pendente` e roda `processar_pendentes`.
