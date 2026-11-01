@@ -8,7 +8,7 @@ import db
 from ingestao.receber import receber
 from ingestao.simulador import simular
 from pipeline.executar import main
-from tests.test_reconstrucao import dump_gemeo
+from tests.utilitarios import dump_gemeo
 
 RAIZ = Path(__file__).resolve().parent.parent
 INICIO = datetime(2026, 1, 5, tzinfo=timezone.utc)

@@ -24,6 +24,7 @@ from pipeline.consumidor import (
     reprocessar_tudo,
 )
 from tests.fabricas import evento_dict
+from tests.utilitarios import dump_gemeo
 
 AGORA = datetime(2026, 3, 5, 8, 30, 0, tzinfo=timezone.utc)
 OUTRO_AGORA = datetime(2026, 3, 6, 9, 0, 0, tzinfo=timezone.utc)
@@ -35,20 +36,6 @@ def outro_relogio():
 
 def relogio():
     return AGORA
-
-
-def dump_gemeo(conn) -> list[tuple]:
-    """Todas as linhas das três tabelas do gêmeo, ordenadas e sem arredondar."""
-    consultas = {
-        "aluno": "SELECT * FROM gemeo_aluno ORDER BY student_id",
-        "topico": "SELECT * FROM gemeo_topico ORDER BY student_id, topic_id",
-        "exercicio": "SELECT * FROM gemeo_exercicio ORDER BY student_id, exercise_id",
-    }
-    return [
-        (tabela, *tuple(linha))
-        for tabela, sql in consultas.items()
-        for linha in conn.execute(sql).fetchall()
-    ]
 
 
 @pytest.fixture
