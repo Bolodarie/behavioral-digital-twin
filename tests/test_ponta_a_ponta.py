@@ -1,5 +1,6 @@
 """Fluxo ponta a ponta: simulador -> ingestão -> pipeline -> gêmeo -> API."""
 import random
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -170,13 +171,41 @@ def test_evasao_distingue_perfis(caminho_db, simulacao):
     assert media(evasao["desistente"]) > media(evasao["dedicado"])
 
 
-def test_script_imprime_tabela_e_correlacao_reproduziveis(capsys):
-    args = ["--semente", "42", "--alunos", "6", "--dias", "14"]
-    assert main(args) == 0
+DIAS_SCRIPT = 21  # com 14 dias (12 alunos) só um tópico passa dos 6 alunos mínimos; com 21, todos
+ARGS_SCRIPT = ["--semente", "42", "--alunos", "12", "--dias", str(DIAS_SCRIPT)]
+TOPICOS = ("funcoes", "equacao_1_grau", "equacao_2_grau", "sistemas_lineares")
+LINHA_CORRELACAO = re.compile(r"^\s+(\w+)\s+([+-]\d\.\d{3})\s+\((\d+) alunos\)$")
+
+
+def test_script_imprime_tabela_e_correlacao_reproduziveis(capsys, tmp_path):
+    assert main(ARGS_SCRIPT) == 0
     primeira = capsys.readouterr().out
-    assert main(args) == 0
+    assert main(ARGS_SCRIPT) == 0
     assert capsys.readouterr().out == primeira
     assert "aluno-001" in primeira
-    assert "Spearman por topico" in primeira
-    for topico in ("funcoes", "equacao_1_grau", "equacao_2_grau", "sistemas_lineares"):
-        assert topico in primeira.split("Spearman por topico")[1]
+    tabela, _, secao = primeira.partition("Spearman por topico")
+    assert secao
+    assert "aluno-001" in tabela
+    assert all(topico in secao for topico in TOPICOS)
+
+    # Ao menos um tópico tem correlação calculada (não só "amostra insuficiente")
+    # e o número impresso bate com o calculado direto por `comparar`.
+    impressas = {}
+    for linha in secao.splitlines():
+        achou = LINHA_CORRELACAO.match(linha)
+        if achou:
+            impressas[achou.group(1)] = (float(achou.group(2)), int(achou.group(3)))
+    assert impressas
+
+    simulacao = simular(semente=42, n_alunos=12, inicio=INICIO, dias=DIAS_SCRIPT)
+    caminho = tmp_path / "script.db"
+    _ingerir_e_processar(caminho, simulacao)
+    conn = db.abrir_somente_leitura(caminho)
+    try:
+        esperadas = _por_topico(comparar(conn, simulacao))
+    finally:
+        conn.close()
+    assert set(impressas) == set(esperadas)
+    for topico, (rho, alunos) in impressas.items():
+        assert alunos == len(esperadas[topico])
+        assert rho == pytest.approx(_correlacao(esperadas[topico]), abs=5e-4)
