@@ -4,7 +4,7 @@ Pipeline de dados que transforma eventos de interação de alunos de álgebra (c
 
 É uma PoC de portfólio. O foco é **engenharia de dados e desenho de back-end** (fluxo da informação, idempotência, ordenação, evento atrasado, reprocessamento, separação de camadas), não um produto. Python 3.10, SQLite, Pydantic v2 e FastAPI; nada além disso.
 
-A ideia central: a tabela de **eventos brutos é a fonte da verdade**, e o gêmeo é só uma consequência dela. Dá para apagar o gêmeo inteiro e reconstruí-lo, e o resultado é exatamente o mesmo, até o último bit dos números decimais.
+A ideia central: a tabela de **eventos brutos é a fonte da verdade**, e o gêmeo é só uma consequência dela. Dá para apagar o gêmeo inteiro e reconstruí-lo, e o resultado é exatamente o mesmo, até o último bit dos números decimais (no mesmo ambiente: mesma máquina e versão do Python; `10 **` e `math.exp` não garantem bits idênticos entre plataformas).
 
 Projeto separado da PoC `edu-agent-orchestrator` (assistente de chat de álgebra, repositório próprio). Uma ponte entre os dois está só nas [evoluções possíveis](#evoluções-possíveis).
 
@@ -172,7 +172,7 @@ Em particular: a ingestão não conhece o gêmeo (o simulador reimplementa a esc
 
 A regra é verificada por `tests/test_arquitetura.py`, que lê os arquivos com `ast` (inclusive `importlib.import_module` e `__import__`) e falha se uma fronteira for cruzada. `scripts/` também é verificado: pode compor as camadas, mas nenhuma camada nem script pode importar `tests/`. Só `tests/` fica de fora. A proibição de `gemeo.repositorio` no recomendador é checada pelo nome do import (`from gemeo import repositorio` e `gemeo.repositorio` são pegos); o teste não enxerga acesso por atributo depois de um `import gemeo` simples.
 
-A lógica de domínio (`elo`, `evasao`, `atualizacao`, `recomendacao/escolher`) é pura: recebe estado e evento e devolve novo estado, sem SQL e sem relógio. Só `gemeo/repositorio.py`, `ingestao/receber.py` e `pipeline/fila.py` falam SQL.
+A lógica de domínio (`elo`, `evasao`, `atualizacao`, `recomendacao/escolher`) é pura: recebe estado e evento e devolve novo estado, sem SQL e sem relógio. O SQL das tabelas de eventos e do gêmeo fica só em `gemeo/repositorio.py` (gêmeo), `ingestao/receber.py` e `pipeline/fila.py` (eventos). Outro SQL existe, mas é de infraestrutura e não mexe nessas tabelas: `db.py` (schema, catálogo, PRAGMAs, probe de abertura), `api/main.py` (`BEGIN` da leitura consistente) e `scripts/comparar_habilidades.py` (um `SELECT` de leitura para a tabela comparativa).
 
 ## Modelo de dados
 
@@ -237,7 +237,7 @@ p = 1 / (1 + e^(−z))
 
 Tudo o que muda com um **evento** é guardado: ratings, velocidade, taxa de abandono, erros seguidos, desempenho relativo. A **probabilidade de evasão não é guardada**: é calculada a cada leitura da API, com o relógio injetado (`agora`).
 
-O motivo: o sinal mais forte de evasão (o aluno sumir) não gera evento. Se o valor fosse gravado na hora do evento, um aluno que parou há um mês continuaria com a probabilidade de quando estudou pela última vez. Por isso o que se guarda é o horário do último evento, e a conta do tempo é feita na hora de ler. Efeito bom: o gêmeo gravado nunca depende do relógio, só dos eventos, e o reprocessamento reproduz o estado exato. O relógio só aparece nas bordas (CLIs e `create_app`) e, nos testes, é sempre injetado.
+O motivo: o sinal mais forte de evasão (o aluno sumir) não gera evento. Se o valor fosse gravado na hora do evento, um aluno que parou há um mês continuaria com a probabilidade de quando estudou pela última vez. Por isso o que se guarda é o horário do último evento, e a conta do tempo é feita na hora de ler. Efeito bom: nenhum valor do gêmeo usa o relógio, todos vêm dos eventos, e o reprocessamento reproduz o estado exato. O relógio só entra em `recebido_em`, `processado_em` (carimbos de auditoria, fora do gêmeo) e no "agora" da API (probabilidade de evasão). Os três usam o relógio real por padrão e aceitam um relógio injetado (`agora`); nos testes ele é sempre injetado. Um relógio injetado precisa devolver `datetime` com fuso: nos carimbos, um `datetime` sem fuso seria lido como horário local da máquina, e na API ele faria a conta de evasão falhar.
 
 ## Recomendação
 
@@ -263,7 +263,7 @@ Aluno sem nenhum evento processado: `404`. Aluno que só tem `exercicio_iniciado
 
 Funções públicas em `pipeline/consumidor.py` (todas recebem a conexão):
 
-- `processar_evento(conn, event_id)`: aplica um evento pendente. Devolve `"processado"`, `"rejeitado"` ou `"ignorado"` (já estava processado ou rejeitado).
+- `processar_evento(conn, event_id)`: aplica um evento pendente. Devolve `"processado"`, `"rejeitado"`, `"ignorado"` (já estava processado ou rejeitado) ou `"reconstruido"` (era um evento atrasado: o gêmeo do aluno foi refeito em ordem).
 - `processar_pendentes(conn)`: o laço do dia a dia; devolve as contagens de processados, rejeitados e alunos reconstruídos.
 - `reconstruir_aluno(conn, student_id)`: apaga o gêmeo do aluno e reaplica todos os eventos dele que não estejam `rejeitado`, em ordem `(occurred_at, event_id)`, numa única transação.
 - `reprocessar_tudo(conn)`: apaga todo o gêmeo, devolve os eventos não rejeitados a `pendente` e roda `processar_pendentes`.
@@ -272,7 +272,7 @@ Funções públicas em `pipeline/consumidor.py` (todas recebem a conexão):
 
 **Ordem.** Os pendentes são processados em ordem `(occurred_at, event_id)`. O desempate é pelo `event_id`, e não pela ordem de chegada (`seq`); é isso que torna o resultado independente da ordem em que os eventos chegaram.
 
-**Atrasado.** O Elo depende da ordem das respostas. Se a chave `(occurred_at, event_id)` de um pendente é menor que `(ultimo_evento_em, ultimo_evento_id)` do aluno (a comparação usa a chave completa, para tratar horário igual), aplicá-lo "em cima" daria um rating diferente do correto. Então o pipeline chama `reconstruir_aluno` para esse aluno e refaz o estado na ordem certa. Isso só acontece quando o atrasado chega depois de um evento mais novo do mesmo aluno já ter sido processado. `processar_evento` isolado, nesse caso, levanta `EventoAtrasado` e deixa o evento pendente; quem trata é `processar_pendentes`.
+**Atrasado.** O Elo depende da ordem das respostas. Se a chave `(occurred_at, event_id)` de um pendente é menor que `(ultimo_evento_em, ultimo_evento_id)` do aluno (a comparação usa a chave completa, para tratar horário igual), aplicá-lo "em cima" daria um rating diferente do correto. Então o pipeline reconstrói esse aluno e refaz o estado na ordem certa, numa transação só. Isso só acontece quando o atrasado chega depois de um evento mais novo do mesmo aluno já ter sido processado. Vale tanto para `processar_pendentes` quanto para `processar_evento` isolado, que nesse caso devolve `"reconstruido"`; os outros pendentes do aluno saem processados da mesma reconstrução.
 
 **Rejeitado.** Há dois tipos de falha, tratados de forma diferente. (a) Erro de domínio ligado ao evento (`EventoInvalido`, por exemplo um exercício que sumiu do catálogo depois da ingestão): desfaz a transação do evento, marca-o `rejeitado` com o motivo, de forma permanente, e o lote segue; reconstruções e reprocessamentos não reaplicam eventos rejeitados. (b) Qualquer outra exceção (bug, banco indisponível): desfaz a transação daquele evento, ele continua `pendente` e a exceção sobe. Erro inesperado não é engolido.
 
@@ -280,7 +280,7 @@ Funções públicas em `pipeline/consumidor.py` (todas recebem a conexão):
 
 **Reprocessamento completo.** `reprocessar_tudo` (CLI: `--reprocessar`) apaga o gêmeo e refaz tudo a partir de `eventos_brutos`.
 
-**Garantia de exatidão.** Os mesmos eventos, em qualquer ordem de chegada, resultam em um gêmeo **idêntico**: mesmos valores, não valores próximos. As mesmas contas na mesma ordem dão os mesmos `float`s de 64 bits; o SQLite guarda `REAL` em 64 bits sem perda; nada é arredondado ao gravar; `atualizado_em` e `ultimo_evento_em` vêm do horário do evento. Os testes (`tests/test_reconstrucao.py` e `tests/test_ponta_a_ponta.py`) comparam com igualdade exata, inclusive o gêmeo gerado com `--defeitos` (duplicados, desordem e malformados) contra o gerado sem defeitos.
+**Garantia de exatidão.** Os mesmos eventos, em qualquer ordem de chegada, resultam em um gêmeo **idêntico**: mesmos valores, não valores próximos. As mesmas contas na mesma ordem dão os mesmos `float`s de 64 bits, no mesmo ambiente (mesma máquina e versão do Python: `10 **` e `math.exp` não são garantidos bit a bit entre plataformas); o SQLite guarda `REAL` em 64 bits sem perda; nada é arredondado ao gravar; `atualizado_em` e `ultimo_evento_em` vêm do horário do evento. Os testes (`tests/test_reconstrucao.py` e `tests/test_ponta_a_ponta.py`) comparam com igualdade exata, inclusive o gêmeo gerado com `--defeitos` (duplicados, desordem e malformados) contra o gerado sem defeitos.
 
 ## Habilidade verdadeira × Elo estimado
 
@@ -329,6 +329,7 @@ A evidência que o projeto assume está em `tests/test_ponta_a_ponta.py`: uma tu
 - **Correlação por tópico é ruidosa.** Com cerca de 10 alunos por tópico (12 alunos no total), o Spearman por tópico varia muito. O teste de convergência junta mais alunos (40) e fixa a semente 42.
 - **`eventos_brutos` só cresce.** Eventos nunca são apagados nem alterados; depois da inserção só `status`, `motivo_rejeicao` e `processado_em` mudam. Não há rotina de limpeza.
 - **Resolução de 1 segundo.** `occurred_at` perde frações de segundo; eventos do mesmo aluno no mesmo segundo são ordenados por `event_id`, não pela ordem em que aconteceram de fato.
+- **Sem migração de schema.** O banco é criado com `CREATE TABLE IF NOT EXISTS`; um banco criado por uma versão anterior não é alterado (por exemplo, `gemeo_aluno.ultimo_evento_id` agora é `NOT NULL`). As tabelas do gêmeo são dados derivados: o caminho suportado é criar um banco novo (ou apagar o arquivo) e reprocessar.
 - **É uma PoC.** Sem autenticação, sem broker, uma única base SQLite; o catálogo é pequeno e fixo.
 
 ## Evoluções possíveis
