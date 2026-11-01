@@ -12,7 +12,8 @@ from ingestao.receber import receber
 from ingestao.simulador import simular
 from pipeline.consumidor import processar_pendentes
 from scripts.comparar_habilidades import comparar, main
-from tests.utilitarios import dump_gemeo, spearman
+from scripts.estatistica import spearman
+from tests.utilitarios import dump_gemeo
 
 SEMENTE, ALUNOS, DIAS = 42, 12, 42
 INICIO = datetime(2026, 1, 5, tzinfo=timezone.utc)

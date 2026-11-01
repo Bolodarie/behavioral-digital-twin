@@ -24,14 +24,14 @@ python -m scripts.comparar_habilidades                            # tabela "habi
 ingestao     ──► modelos, db, catalogo
 pipeline     ──► gemeo, modelos, db, catalogo
 gemeo        ──► modelos, db, catalogo
-recomendacao ──► gemeo (só módulos puros: elo, evasao), modelos, catalogo
+recomendacao ──► gemeo (sem `gemeo.repositorio`; na prática só elo e evasao), modelos, catalogo
 api          ──► recomendacao, gemeo, modelos, db
 db           ──► catalogo
 catalogo, modelos ──► (nada do projeto)
 ```
 
 - `recomendacao` nunca importa `gemeo.repositorio`; quem lê o banco e chama o recomendador é a API.
-- `tests/test_arquitetura.py` (via `ast`, incluindo `importlib` e `__import__`) falha se qualquer fronteira for violada. `tests/` e `scripts/` ficam de fora. Não enfraqueça esse teste para fazer código passar; corrija o import.
+- `tests/test_arquitetura.py` (via `ast`, incluindo `importlib` e `__import__`) falha se qualquer fronteira for violada. `scripts/` também é verificado (pode compor camadas, mas ninguém importa `tests`); só `tests/` fica de fora. A proibição de `gemeo.repositorio` é checada pelo nome do import, não vê acesso por atributo após `import gemeo`. Não enfraqueça esse teste para fazer código passar; corrija o import.
 
 ## Decisões que não se mudam sem conversar
 

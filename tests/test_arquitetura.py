@@ -19,6 +19,10 @@ PERMITIDO: dict[str, set[str]] = {
     "db": {"catalogo"},
     "catalogo": set(),
     "modelos": set(),
+    # scripts compõem camadas, mas nunca dependem de tests/
+    "scripts": {
+        "ingestao", "pipeline", "gemeo", "recomendacao", "api", "modelos", "db", "catalogo",
+    },
 }
 
 # Regra extra: o recomendador só pode usar os módulos puros do gêmeo.
@@ -27,11 +31,14 @@ PROIBIDO_EXTRA: dict[str, set[str]] = {
 }
 
 # Módulos de primeiro nível que pertencem ao projeto (o resto é stdlib/terceiros).
-MODULOS_DO_PROJETO = set(PERMITIDO) | {"scripts"}
+# `tests` entra para que nenhuma camada (nem `scripts`) possa importá-lo.
+MODULOS_DO_PROJETO = set(PERMITIDO) | {"tests"}
 
-# O que é verificado: tests/ e scripts/ ficam de fora (scripts compõem camadas).
+# O que é verificado: tudo exceto tests/ (o código de teste pode importar qualquer coisa).
 ARQUIVOS_VERIFICADOS = ["modelos.py", "db.py"]
-PACOTES_VERIFICADOS = ["catalogo", "ingestao", "pipeline", "gemeo", "recomendacao", "api"]
+PACOTES_VERIFICADOS = [
+    "catalogo", "ingestao", "pipeline", "gemeo", "recomendacao", "api", "scripts",
+]
 
 
 # --- verificador ------------------------------------------------------------
@@ -148,6 +155,19 @@ def test_import_permitido_passa():
     assert violacoes("recomendacao", "from gemeo.elo import expectativa", "recomendacao") == []
     assert violacoes("api", "from gemeo import repositorio", "api") == []
     assert violacoes("gemeo", "from . import elo", "gemeo") == []
+
+
+def test_nenhuma_camada_pode_importar_tests():
+    for dono in PERMITIDO:
+        assert violacoes(dono, "from tests.utilitarios import dump_gemeo", dono) != []
+        assert violacoes(dono, "import tests", dono) != []
+        assert violacoes(dono, "import importlib\nimportlib.import_module('tests.fabricas')", dono) != []
+
+
+def test_scripts_podem_compor_camadas_mas_nao_importar_tests():
+    assert violacoes("scripts", "from pipeline.consumidor import processar_pendentes", "scripts") == []
+    assert violacoes("scripts", "from scripts.estatistica import spearman", "scripts") == []
+    assert violacoes("scripts", "from tests.utilitarios import spearman", "scripts") != []
 
 
 # --- teste real -------------------------------------------------------------

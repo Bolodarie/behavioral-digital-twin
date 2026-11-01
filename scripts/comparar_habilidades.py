@@ -15,7 +15,7 @@ import db
 from ingestao.receber import receber
 from ingestao.simulador import Simulacao, simular
 from pipeline.consumidor import processar_pendentes
-from tests.utilitarios import spearman
+from scripts.estatistica import spearman
 
 INICIO_PADRAO = "2026-01-05T00:00:00Z"
 MIN_TENTATIVAS = 5  # amostra mínima do aluno no tópico

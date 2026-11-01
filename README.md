@@ -152,7 +152,7 @@ behavioral-digital-twin/
 ├── gemeo/                # elo.py, evasao.py, atualizacao.py (puros), repositorio.py (SQL)
 ├── recomendacao/         # escolher.py (puro)
 ├── api/                  # main.py (FastAPI, só leitura)
-├── scripts/              # comparar_habilidades.py
+├── scripts/              # comparar_habilidades.py, estatistica.py (Spearman à mão)
 └── tests/
 ```
 
@@ -162,7 +162,7 @@ behavioral-digital-twin/
 ingestao     ──► modelos, db, catalogo
 pipeline     ──► gemeo, modelos, db, catalogo
 gemeo        ──► modelos, db, catalogo
-recomendacao ──► gemeo (só módulos puros: elo, evasao), modelos, catalogo
+recomendacao ──► gemeo (sem `gemeo.repositorio`; na prática só elo e evasao), modelos, catalogo
 api          ──► recomendacao, gemeo, modelos, db
 db           ──► catalogo
 catalogo, modelos ──► (nada do projeto)
@@ -170,7 +170,7 @@ catalogo, modelos ──► (nada do projeto)
 
 Em particular: a ingestão não conhece o gêmeo (o simulador reimplementa a escala do Elo de propósito, para o gerador dos dados ser independente do estimador; um teste confere que as duas não divergem); o recomendador nunca importa `gemeo.repositorio` (quem lê o banco e chama o recomendador é a API); a API não importa `ingestao` nem `pipeline`, então **não tem como disparar processamento**: é só leitura.
 
-A regra é verificada por `tests/test_arquitetura.py`, que lê os arquivos com `ast` (inclusive `importlib.import_module` e `__import__`) e falha se uma fronteira for cruzada. `tests/` e `scripts/` ficam de fora porque compõem camadas.
+A regra é verificada por `tests/test_arquitetura.py`, que lê os arquivos com `ast` (inclusive `importlib.import_module` e `__import__`) e falha se uma fronteira for cruzada. `scripts/` também é verificado: pode compor as camadas, mas nenhuma camada nem script pode importar `tests/`. Só `tests/` fica de fora. A proibição de `gemeo.repositorio` no recomendador é checada pelo nome do import (`from gemeo import repositorio` e `gemeo.repositorio` são pegos); o teste não enxerga acesso por atributo depois de um `import gemeo` simples.
 
 A lógica de domínio (`elo`, `evasao`, `atualizacao`, `recomendacao/escolher`) é pura: recebe estado e evento e devolve novo estado, sem SQL e sem relógio. Só `gemeo/repositorio.py`, `ingestao/receber.py` e `pipeline/fila.py` falam SQL.
 

@@ -1,7 +1,7 @@
-"""Utilitários de teste: correlação de Spearman e dump do gêmeo."""
+"""Testes de `scripts.estatistica` (correlação de Spearman)."""
 import pytest
 
-from tests.utilitarios import spearman
+from scripts.estatistica import spearman
 
 
 def test_correlacao_perfeita_positiva():
