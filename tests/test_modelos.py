@@ -121,3 +121,11 @@ def test_resultado_ingestao_status_fechado():
     assert ResultadoIngestao(status="aceito", event_id="e1").motivo is None
     with pytest.raises(ValidationError):
         ResultadoIngestao(status="talvez", event_id=None)
+
+
+@pytest.mark.parametrize(
+    "ocorrido", ["9999-12-31T23:59:59-05:00", "0001-01-01T00:00:00+05:00"]
+)
+def test_occurred_at_fora_do_intervalo_vira_validation_error(ocorrido):
+    with pytest.raises(ValidationError):
+        Evento(**evento_dict(occurred_at=ocorrido))

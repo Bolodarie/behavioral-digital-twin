@@ -49,7 +49,10 @@ class Evento(BaseModel):
     def _para_utc_sem_fracao(cls, valor: datetime) -> datetime:
         if valor.tzinfo is None or valor.utcoffset() is None:
             raise ValueError("occurred_at precisa ter fuso horário")
-        return valor.astimezone(timezone.utc).replace(microsecond=0)
+        try:
+            return valor.astimezone(timezone.utc).replace(microsecond=0)
+        except OverflowError:
+            raise ValueError("occurred_at fora do intervalo suportado") from None
 
     @model_validator(mode="after")
     def _validar_payload(self) -> "Evento":
