@@ -222,7 +222,7 @@ def test_surrogate_no_student_id_vira_rejeitado(conn):
     r = receber(conn, evento_dict(student_id="\ud800"), agora=relogio)
     assert r.status == "rejeitado"
     assert r.event_id == "e1"
-    assert "caracteres invalidos" in r.motivo
+    assert r.motivo.startswith("student_id:")
     (linha,) = linhas(conn)
     assert linha["status"] == "rejeitado"
     assert linha["student_id"] is None

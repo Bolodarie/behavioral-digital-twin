@@ -23,20 +23,49 @@ def _texto_utc(momento: datetime) -> str:
     return momento.astimezone(timezone.utc).strftime(_FORMATO_TEMPO)
 
 
+def _encodavel(texto: str) -> bool:
+    """O SQLite grava texto em UTF-8; surrogates soltos não são codificáveis."""
+    try:
+        texto.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _limpo(texto: str) -> str:
+    """Troca caracteres não codificáveis por escapes, para caber no banco."""
+    return texto.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def _event_id_de(dado: Any) -> str | None:
+    """`event_id` utilizável (texto não vazio e codificável) ou `None`."""
     if isinstance(dado, dict):
         valor = dado.get("event_id")
-        if isinstance(valor, str) and valor:
+        if isinstance(valor, str) and valor and _encodavel(valor):
             return valor
     return None
 
 
-def _bruto_json(dado: Any) -> str:
+def _dumps(dado: Any, ensure_ascii: bool) -> str:
+    return json.dumps(dado, ensure_ascii=ensure_ascii, sort_keys=True, default=str)
+
+
+def _bruto_de_repr(dado: Any) -> str:
     try:
-        return json.dumps(dado, ensure_ascii=False, sort_keys=True, default=str)
-    except (TypeError, ValueError):
-        # p.ex. chaves de tipos misturados, que `sort_keys` não consegue ordenar
-        return json.dumps(repr(dado), ensure_ascii=False)
+        return json.dumps(repr(dado)[:10_000], ensure_ascii=True)
+    except Exception:  # repr pode estourar a pilha ou falhar em objetos estranhos
+        return '{"erro": "nao serializavel"}'
+
+
+def _bruto_json(dado: Any) -> str:
+    """JSON do dado cru; sempre devolve texto UTF-8 válido, nunca levanta."""
+    try:
+        texto = _dumps(dado, ensure_ascii=False)
+        if _encodavel(texto):
+            return texto
+        return _dumps(dado, ensure_ascii=True)  # escapa surrogates soltos
+    except Exception:  # TypeError, ValueError, RecursionError...
+        return _bruto_de_repr(dado)
 
 
 def _motivo_da_validacao(erro: ValidationError) -> str:
@@ -44,15 +73,15 @@ def _motivo_da_validacao(erro: ValidationError) -> str:
     for e in erro.errors():
         campo = ".".join(str(p) for p in e["loc"]) or "evento"
         partes.append(f"{campo}: {e['msg']}")
-    return "; ".join(partes)
+    return _limpo("; ".join(partes))
 
 
 def _motivo_do_catalogo(evento: Evento) -> str | None:
     exercicio = exercicio_por_id(evento.exercise_id)
     if exercicio is None:
-        return f"exercicio inexistente no catalogo: {evento.exercise_id}"
+        return _limpo(f"exercicio inexistente no catalogo: {evento.exercise_id}")
     if exercicio.topico_id != evento.topic:
-        return (
+        return _limpo(
             f"topic diverge do catalogo: exercicio {evento.exercise_id} "
             f"e do topico {exercicio.topico_id}, nao {evento.topic}"
         )
@@ -67,6 +96,10 @@ def _validar(dado: Any) -> tuple[Evento | None, str | None]:
         evento = Evento.model_validate(dado)
     except ValidationError as erro:
         return None, _motivo_da_validacao(erro)
+    except RecursionError:
+        return None, "dado aninhado demais"
+    if not (_encodavel(evento.event_id) and _encodavel(evento.student_id)):
+        return None, "texto com caracteres invalidos"
     motivo = _motivo_do_catalogo(evento)
     if motivo is not None:
         return None, motivo
