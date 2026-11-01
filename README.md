@@ -330,7 +330,6 @@ A evidência que o projeto assume está em `tests/test_ponta_a_ponta.py`: uma tu
 - **Correlação por tópico é ruidosa.** Com cerca de 10 alunos por tópico (12 alunos no total), o Spearman por tópico varia muito. O teste de convergência junta mais alunos (40) e fixa a semente 42.
 - **`eventos_brutos` só cresce.** Eventos nunca são apagados nem alterados; depois da inserção só `status`, `motivo_rejeicao` e `processado_em` mudam. Não há rotina de limpeza.
 - **Resolução de 1 segundo.** `occurred_at` perde frações de segundo; eventos do mesmo aluno no mesmo segundo são ordenados por `event_id`, não pela ordem em que aconteceram de fato.
-- **Um aviso de terceiros na suíte.** `pytest` imprime um aviso de depreciação do Starlette sobre o uso de `httpx` no `TestClient`. Vem das bibliotecas, não deste código, e não afeta o resultado.
 - **É uma PoC.** Sem autenticação, sem broker, uma única base SQLite; o catálogo é pequeno e fixo.
 
 ## Evoluções possíveis

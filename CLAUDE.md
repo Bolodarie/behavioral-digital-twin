@@ -7,7 +7,7 @@ Design completo e aprovado: `docs/superpowers/specs/2026-10-31-behavioral-digita
 ## Comandos
 
 ```bash
-pip install -r requirements-dev.txt   # runtime (pydantic, fastapi, uvicorn) + pytest, httpx
+pip install -r requirements-dev.txt   # runtime (pydantic, fastapi, uvicorn) + pytest, httpx, httpx2
 pytest                                # suíte de testes
 
 python -m ingestao.simular --semente 42 --alunos 12 --dias 42 --inicio 2026-01-05T00:00:00Z --defeitos   # [--db caminho]
@@ -50,7 +50,7 @@ catalogo, modelos ──► (nada do projeto)
 - Idioma: docstrings curtas, mensagens, seed e README em **português do Brasil**; documentação sem jargão comercial.
 - Python 3.10 (type hints modernos, sem recursos 3.11+). Contratos entre camadas em Pydantic (`modelos.py`), não dicts soltos (exceção: o simulador emite `dict`, a ingestão converte).
 - Timestamps: UTC, texto `YYYY-MM-DDTHH:MM:SSZ` no banco; `datetime` com fuso nos modelos; resolução de 1 s.
-- Dependências de runtime só `pydantic>=2`, `fastapi>=0.110`, `uvicorn`; `httpx` e `pytest` só em dev. `sqlite3` da stdlib; nada de numpy, scipy, pandas, SQLAlchemy.
+- Dependências de runtime só `pydantic>=2`, `fastapi>=0.110`, `uvicorn`; `httpx`, `httpx2` e `pytest` só em dev. `sqlite3` da stdlib; nada de numpy, scipy, pandas, SQLAlchemy.
 - Banco em `data/gemeo.db` (ancorado na pasta do projeto via `DEFAULT_DB_PATH`); não versionar `*.db`.
 - Commits em Conventional Commits, em inglês curto (`feat:`, `fix:`, `test:`, `docs:`, `refactor:`, `chore:`), **sem nenhuma atribuição a IA** (nada de `Co-Authored-By`, nada de "Generated with ..." em commit, PR ou arquivo).
 - Testes enxutos e focados no comportamento, com relógio injetado e semente fixa; nunca dependem da data de hoje.
