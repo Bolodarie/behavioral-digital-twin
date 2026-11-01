@@ -17,13 +17,16 @@ SEMENTE, ALUNOS, DIAS = 42, 12, 42
 INICIO = datetime(2026, 1, 5, tzinfo=timezone.utc)
 MIN_TENTATIVAS = 5
 MIN_ALUNOS = 6
-# Medido com semente 42, 12 alunos e 42 dias (ver relatório da US15): Spearman
-# agregado de 0,33 e por tópico entre 0,05 e 0,47. Com 9 a 10 alunos por tópico o
-# erro de amostragem é de cerca de 0,35, então o limiar vale para o conjunto de
-# pares aluno x tópico; por tópico exige-se só correlação positiva. O limiar fica
-# abaixo do medido, mas acima do que um Elo quebrado (sem atualização, sinal
-# invertido) ou ratings embaralhados produzem.
-LIMIAR_CONVERGENCIA = 0.25
+# A convergência usa uma turma maior (a de 12 alunos dá 9 a 10 alunos por tópico e
+# erro de amostragem de cerca de 0,35: não distingue um Elo correto de um quase
+# certo). Medido com 40 alunos e 42 dias, nas sementes 42, 1..7 (menor valor):
+# Spearman agregado 0,416 e por tópico 0,232. Os limiares ficam alguns centésimos
+# abaixo disso e acima do que Elo defeituoso produz na semente 42: expectativa
+# invertida (0,143 agregado, 0,068 por tópico), dificuldade ignorada (0,255 e
+# 0,128), K negativo ou nulo (negativo / correlação indefinida).
+ALUNOS_CONVERGENCIA = 40
+LIMIAR_CONVERGENCIA = 0.35  # Spearman agregado dos pares aluno x tópico
+LIMIAR_POR_TOPICO = 0.20
 
 
 def _ingerir_e_processar(caminho, simulacao) -> dict[str, int]:
@@ -67,6 +70,20 @@ def linhas(caminho_db, simulacao):
         conn.close()
 
 
+@pytest.fixture(scope="module")
+def linhas_convergencia(tmp_path_factory):
+    simulacao = simular(
+        semente=SEMENTE, n_alunos=ALUNOS_CONVERGENCIA, inicio=INICIO, dias=DIAS
+    )
+    caminho = tmp_path_factory.mktemp("convergencia") / "gemeo.db"
+    _ingerir_e_processar(caminho, simulacao)
+    conn = db.abrir_somente_leitura(caminho)
+    try:
+        return comparar(conn, simulacao)
+    finally:
+        conn.close()
+
+
 def _por_topico(linhas):
     """Tópicos com amostra suficiente: ≥ MIN_ALUNOS alunos com ≥ MIN_TENTATIVAS."""
     grupos: dict[str, list] = {}
@@ -90,18 +107,22 @@ def test_comparar_so_traz_pares_com_tentativas(linhas, simulacao):
         assert l.habilidade_verdadeira == simulacao.habilidades_finais[l.student_id][l.topic_id]
 
 
-def test_elo_converge_para_a_habilidade_verdadeira(linhas):
-    topicos = _por_topico(linhas)
+def test_elo_converge_para_a_habilidade_verdadeira(linhas_convergencia):
+    topicos = _por_topico(linhas_convergencia)
     assert len(topicos) == 4  # a amostra cobre todos os tópicos
     for topico, ls in topicos.items():
-        assert _correlacao(ls) > 0, topico
+        assert _correlacao(ls) >= LIMIAR_POR_TOPICO, topico
     todos = [l for ls in topicos.values() for l in ls]
     assert _correlacao(todos) >= LIMIAR_CONVERGENCIA
 
 
-def test_limiar_nao_e_trivial(linhas):
-    """Controle negativo: ratings embaralhados entre alunos ficam abaixo do limiar."""
-    todos = [l for ls in _por_topico(linhas).values() for l in ls]
+def test_limiar_nao_e_trivial(linhas_convergencia):
+    """Controle negativo: ratings embaralhados entre alunos ficam abaixo do limiar agregado.
+
+    Só o agregado: por tópico (cerca de 10 alunos) o acaso sozinho passa de
+    `LIMIAR_POR_TOPICO` com frequência, então um controle por tópico não prova nada.
+    """
+    todos = [l for ls in _por_topico(linhas_convergencia).values() for l in ls]
     ratings = [l.rating_elo for l in todos]
     random.Random(0).shuffle(ratings)
     assert _correlacao(todos, ratings) < LIMIAR_CONVERGENCIA
@@ -150,9 +171,10 @@ def test_evasao_distingue_perfis(caminho_db, simulacao):
 
 
 def test_script_imprime_tabela_e_correlacao_reproduziveis(capsys):
-    assert main([]) == 0
+    args = ["--semente", "42", "--alunos", "6", "--dias", "14"]
+    assert main(args) == 0
     primeira = capsys.readouterr().out
-    assert main(["--semente", "42", "--alunos", "12", "--dias", "42"]) == 0
+    assert main(args) == 0
     assert capsys.readouterr().out == primeira
     assert "aluno-001" in primeira
     assert "Spearman por topico" in primeira
