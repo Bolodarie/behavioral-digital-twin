@@ -237,7 +237,7 @@ def test_evento_atrasado_levanta_e_fica_pendente(conn):
     receber(conn, evento_dict(event_id="e0", occurred_at="2026-03-02T12:00:30Z"), agora=relogio)
 
     with pytest.raises(EventoAtrasado) as info:
-        processar_pendentes(conn, agora=relogio)
+        processar_evento(conn, "e0", agora=relogio)
 
     assert info.value.student_id == "aluno-1"
     assert status_de(conn) == {"e2": "processado", "e0": "pendente"}
