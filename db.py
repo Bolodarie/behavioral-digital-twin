@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS gemeo_aluno (
     desempenho_relativo REAL NOT NULL,
     respostas           INTEGER NOT NULL,
     ultimo_evento_em    TEXT NOT NULL,
-    ultimo_evento_id    TEXT,
+    ultimo_evento_id    TEXT NOT NULL,
     atualizado_em       TEXT NOT NULL
 );
 """

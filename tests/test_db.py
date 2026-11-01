@@ -116,6 +116,16 @@ def test_somente_leitura_sem_tabelas_do_gemeo(tmp_path, monkeypatch):
         abertas[0].execute("SELECT 1")
 
 
+def test_gemeo_aluno_exige_ultimo_evento_id(conn):
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO gemeo_aluno (student_id, velocidade_media_s, taxa_abandono, "
+            "erros_seguidos, desempenho_relativo, respostas, ultimo_evento_em, "
+            "ultimo_evento_id, atualizado_em) "
+            "VALUES ('a', NULL, 0, 0, 0, 0, '2026-03-02T12:00:00Z', NULL, '2026-03-02T12:00:00Z')"
+        )
+
+
 def test_status_invalido_recusado(conn):
     _inserir_evento(conn, "e1", status="pendente")
     with pytest.raises(sqlite3.IntegrityError):

@@ -10,13 +10,13 @@ import pipeline.consumidor as consumidor
 from gemeo import repositorio
 from ingestao.receber import receber
 from pipeline.consumidor import (
-    EventoAtrasado,
     EventoInvalido,
     ResumoProcessamento,
     processar_evento,
     processar_pendentes,
 )
 from tests.fabricas import evento_dict
+from tests.utilitarios import dump_gemeo
 
 AGORA = datetime(2026, 3, 5, 8, 30, 0, tzinfo=timezone.utc)
 
@@ -28,6 +28,13 @@ def relogio():
 @pytest.fixture
 def conn(tmp_path):
     c = db.abrir(tmp_path / "t.db")
+    yield c
+    c.close()
+
+
+@pytest.fixture
+def conn_b(tmp_path):
+    c = db.abrir(tmp_path / "b.db")
     yield c
     c.close()
 
@@ -230,19 +237,24 @@ def test_falha_no_salvar_nao_deixa_gemeo_pela_metade(conn, monkeypatch):
     assert repositorio.ler_aluno(conn, "aluno-1").ultimo_evento_id == "e1"
 
 
-def test_evento_atrasado_levanta_e_fica_pendente(conn):
+def test_evento_atrasado_reconstroi_o_aluno_e_iguala_a_ordem_cronologica(conn, conn_b):
     receber_todos(conn, tres_eventos()[1:2])  # só e2, 12:01:00
     processar_pendentes(conn, agora=relogio)
-    antes = estado_do_gemeo(conn)
-    receber(conn, evento_dict(event_id="e0", occurred_at="2026-03-02T12:00:30Z"), agora=relogio)
+    atrasado = evento_dict(event_id="e0", occurred_at="2026-03-02T12:00:30Z")
+    receber(conn, atrasado, agora=relogio)
 
-    with pytest.raises(EventoAtrasado) as info:
-        processar_evento(conn, "e0", agora=relogio)
+    # não levanta EventoAtrasado: devolve o resultado da reconstrução
+    assert processar_evento(conn, "e0", agora=relogio) == "reconstruido"
 
-    assert info.value.student_id == "aluno-1"
-    assert status_de(conn) == {"e2": "processado", "e0": "pendente"}
-    assert estado_do_gemeo(conn) == antes
+    assert status_de(conn) == {"e2": "processado", "e0": "processado"}
     assert not conn.in_transaction
+    # o gêmeo é exatamente o do processamento em ordem cronológica
+    receber_todos(conn_b, [atrasado, tres_eventos()[1]])
+    processar_pendentes(conn_b, agora=relogio)
+    assert dump_gemeo(conn) == dump_gemeo(conn_b)
+    assert repositorio.ler_aluno(conn, "aluno-1").ultimo_evento_id == "e2"
+    # reprocessar o mesmo evento agora é um "ignorado"
+    assert processar_evento(conn, "e0", agora=relogio) == "ignorado"
 
 
 def test_empate_de_horario_decide_pelo_event_id(conn):
@@ -251,8 +263,7 @@ def test_empate_de_horario_decide_pelo_event_id(conn):
     processar_pendentes(conn, agora=relogio)
 
     receber(conn, evento_dict(event_id="a", occurred_at=mesmo_horario), agora=relogio)
-    with pytest.raises(EventoAtrasado):
-        processar_evento(conn, "a", agora=relogio)
+    assert processar_evento(conn, "a", agora=relogio) == "reconstruido"
 
     receber(conn, evento_dict(event_id="c", occurred_at=mesmo_horario), agora=relogio)
     assert processar_evento(conn, "c", agora=relogio) == "processado"

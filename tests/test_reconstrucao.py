@@ -16,7 +16,6 @@ from ingestao.receber import receber
 from ingestao.simulador import simular
 from pipeline import fila
 from pipeline.consumidor import (
-    EventoAtrasado,
     ResumoProcessamento,
     processar_evento,
     processar_pendentes,
@@ -263,18 +262,37 @@ def test_processar_pendentes_conta_o_aluno_reconstruido_uma_vez(conn):
     assert repositorio.ler_aluno(conn, "aluno-2").respostas == 1
 
 
-def test_processar_evento_isolado_continua_levantando_evento_atrasado(conn):
+def test_processar_evento_isolado_reconstroi_em_vez_de_levantar(conn, conn_b):
     receber_todos(conn, sequencia()[1:2])
     processar_pendentes(conn, agora=relogio)
-    antes = dump_gemeo(conn)
     receber_todos(conn, sequencia()[:1])
 
-    with pytest.raises(EventoAtrasado) as info:
+    # EventoAtrasado deixou de ser público na chamada isolada
+    assert processar_evento(conn, "e1", agora=relogio) == "reconstruido"
+
+    assert set(status_de(conn).values()) == {"processado"}
+    receber_todos(conn_b, sequencia()[:2])
+    processar_pendentes(conn_b, agora=relogio)
+    assert dump_gemeo(conn) == dump_gemeo(conn_b)
+    assert not conn.in_transaction
+
+
+def test_reconstrucao_por_processar_evento_atomica(conn, monkeypatch):
+    receber_todos(conn, sequencia()[1:2])
+    processar_pendentes(conn, agora=relogio)
+    receber_todos(conn, sequencia()[:1])
+    antes = dump_gemeo(conn)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("falha no meio da reconstrucao")
+
+    monkeypatch.setattr(consumidor, "aplicar_evento", explode)
+    with pytest.raises(RuntimeError):
         processar_evento(conn, "e1", agora=relogio)
 
-    assert info.value.student_id == "aluno-1"
-    assert status_de(conn)["e1"] == "pendente"
     assert dump_gemeo(conn) == antes
+    assert status_de(conn)["e1"] == "pendente"
+    assert not conn.in_transaction
 
 
 def test_rejeitado_durante_a_reconstrucao_segue_rejeitado_e_o_resto_aplica(conn):
